@@ -28,6 +28,7 @@ void atk_8266_get_wanip(u8* ipbuf);
 void atk_8266_get_ip(u8 x,u8 y);
 u8 atk_8266_wifista_init(void);		//sta模式初始化
 void atk_8266_wifiap_init(void); //ap模式初始化
+u8 atk_8266_staclient_init(u8 mode);
 
 //用户配置参数
 extern const u8* portnum;			//连接端口

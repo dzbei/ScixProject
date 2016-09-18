@@ -340,6 +340,7 @@ void wifistatus_task(void *p_arg)
 				}
 				else
 				{
+						//挂起pure_task任务
 						OSTimeDlyHMSM(0,0,0,2000,OS_OPT_TIME_PERIODIC,&err);//延时2s
 				}
 		}
@@ -367,17 +368,82 @@ void wifistatus_task(void *p_arg)
 	}
 }
 
-//PURE任务  与无线升级共用一个任务   设置无线升级为定时升级
-//挂起wifistatus_task 任务
+//PURE任务  与无线升级共用一个任务   设置无线升级为定时升级  tcp client方式工作
+//挂起wifistatus_task 任务       如果分为两个任务 当客户端切换服务器ip时 会导致断开连接
 void interactive_task(void *p_arg)
 {
 	OS_ERR err;
+	u16 rlen=0;
+	static u8 chagemode = 1;
+	static u8 mode = 0; //0:pure 1:ota
+	static u32 cnt = 0;
+	//根据协议解析数据          初始化网络通信模式  升级时机切入
 	while(1)
 	{		
+			cnt++;//做为系统OTA升级定时器 24小时  24*60*60*60*2s   以500ms为计时单位 
+		
+			if(cnt > 3*60*60*60*2) //3小时
+			{
+				cnt = 0;
+				mode = 1;//启动检测升级标志位
+			}
 			
+			//初始化网络状态与净化器交互
+			if(mode==0 && chagemode==1)
+			{
+				chagemode = 0;
+				if(atk_8266_staclient_init(0))
+				{
+					//网络连接失败
+					//启动网络监控任务
+					//挂起本身任务
+				}
+			}
+			//初始化网络状态无线升级
+			else if(mode==1 && chagemode==1)
+			{
+				chagemode = 0;
+				if(atk_8266_staclient_init(1))
+				{
+					//网络连接失败
+					//启动网络监控任务
+					//挂起本身任务
+				}
+			}
+			
+			//发送数据
+			if(mode == 0)
+			{
+				
+			}
+			//升级模式  升级检测完成把mode置为0
+			else if(mode == 1)
+			{
+				
+			}
+			
+			//如果串口接收到数据  超过20s没有数据进来 则认为网络断开或者升级完成
+			if(USART3_RX_STA&0X8000)
+			{
+					rlen=USART3_RX_STA&0X7FFF;	//得到本次接收到的数据长度
+					USART3_RX_BUF[rlen]=0;		//添加结束符 
+					printf("%s",USART3_RX_BUF);	//发送到串口   
+					//根据mode来进行数据解析
+					if(mode == 0)
+					{
+						//单独处理函数 直接根据协议进行比对
+					}
+					//升级模式  升级检测完成把mode置为0
+					else if(mode == 1)
+					{
+						//单独处理函数 直接根据协议进行比对
+					}
+					
+					USART3_RX_STA = 0;
+			}
+			//		
 			OSTimeDlyHMSM(0,0,0,500,OS_OPT_TIME_PERIODIC,&err);//延时500ms
 	}
 }
-
 
 

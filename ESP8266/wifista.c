@@ -44,32 +44,46 @@ u8 atk_8266_wifista_init(void)
 	*/
 	//等待3s
 	res = atk_8266_send_cmd(p,"WIFI GOT IP",300);
-		
-//这一步放在 无线升级处理和P端交互
-	//设置为单连接模式
-//	atk_8266_send_cmd("AT+CIPMUX=0","OK",20);   //0：单连接，1：多连接
-//	
-//	//ipbuf即远端服务器的IP 需要配置  可以指定服务器地址  应该存放两个服务器地址 在两者之前进行切换
-//	sprintf(p,"AT+CIPSTART=\"TCP\",\"%s\",%s",ipbuf,(u8*)portnum);//端口号固定
-//	res = atk_8266_send_cmd(p,"OK",200);         //连接服务器
-//	//AT+CIPCLOSE   关闭连接  如果需要更换连接 则先关闭当前的服务器连接
-//	/**
-//	失败的话:
-//		DNS Fail
-//		ERROR
-//	**/
-//	if(!res)  
-//	{
-//		//设置为透传模式    TCP
-//		res = atk_8266_send_cmd("AT+CIPMODE=1","OK",200);   
-//	}
-	
+			
 	myfree(SRAMIN,p);		//释放内存 
 	
 	return res;
 	//配置完之后 进入正常数据交互状态      定时去检测是否需要升级 升级在晚上的时间进行 由于是单链路 所有不存在冲突问题
 }
 
+//返回1表示网络出错
+u8 atk_8266_staclient_init(u8 mode)
+{
+		u8 res = 0;
+		char *p;
+		p=mymalloc(SRAMIN,32);							//申请32字节内存
+		
+		atk_8266_send_cmd("AT+CIPCLOSE","OK",200);  
+		atk_8266_send_cmd("AT+CIPMUX=0","OK",20);   //0：单连接，1：多连接
+	
+		if(mode == 0)
+		{
+				//ipbuf即远端服务器的IP 需要配置  可以指定服务器地址  应该存放两个服务器地址 在两者之前进行切换
+				sprintf(p,"AT+CIPSTART=\"TCP\",\"%s\",%s","192.168.1.1","8086");//端口号固定
+				res = atk_8266_send_cmd(p,"OK",200);         //连接服务器
+
+		}
+		else
+		{
+				//ipbuf即远端服务器的IP 需要配置  可以指定服务器地址  应该存放两个服务器地址 在两者之前进行切换
+				sprintf(p,"AT+CIPSTART=\"TCP\",\"%s\",%s","192.168.1.2","8086");//端口号固定
+				res = atk_8266_send_cmd(p,"OK",200);         //连接服务器
+		}
+		
+		if(!res)  
+		{
+				res = atk_8266_send_cmd("AT+CIPMODE=1","OK",200);   
+		}
+		
+		myfree(SRAMIN,p);		//释放内存 
+		
+		return res;
+}
 
 
 
