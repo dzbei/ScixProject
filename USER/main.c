@@ -97,6 +97,17 @@ CPU_STK INTERACTIVE_TASK_STK[INTERACTIVE_STK_SIZE];
 //P端交互任务
 void interactive_task(void *p_arg);
 
+//设置任务优先级
+#define OTA_TASK_PRIO 				7
+//任务堆栈大小
+#define OTA_STK_SIZE				128
+//任务控制块
+OS_TCB OTATaskTCB;
+//任务堆栈
+CPU_STK OTA_TASK_STK[OTA_STK_SIZE];
+//交互任务
+void ota_task(void *p_arg);
+
 //EMWINDEMO任务
 //设置任务优先级
 #define EMWINDEMO_TASK_PRIO			8
@@ -227,6 +238,21 @@ void start_task(void *p_arg)
                  (void*       )0,					
                  (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
                  (OS_ERR*     )&err);		
+	
+	//按键任务	
+	OSTaskCreate((OS_TCB*     )&KeyTaskTCB,		
+				 (CPU_CHAR*   )"Key task", 		
+                 (OS_TASK_PTR )key_task, 			
+                 (void*       )0,					
+                 (OS_PRIO	  )KEY_TASK_PRIO,     
+                 (CPU_STK*    )&KEY_TASK_STK[0],	
+                 (CPU_STK_SIZE)KEY_STK_SIZE/10,	
+                 (CPU_STK_SIZE)KEY_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )0,  					
+                 (void*       )0,					
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
+                 (OS_ERR*     )&err); 
 								 
 	//interactive任务					
 	OSTaskCreate((OS_TCB*     )&InteractiveTaskTCB,		
@@ -242,22 +268,23 @@ void start_task(void *p_arg)
                  (void*       )0,					
                  (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
                  (OS_ERR*     )&err);
-     
-	//按键任务	
-	OSTaskCreate((OS_TCB*     )&KeyTaskTCB,		
-				 (CPU_CHAR*   )"Key task", 		
-                 (OS_TASK_PTR )key_task, 			
+								 
+		//ota任务					
+	OSTaskCreate((OS_TCB*     )&OTATaskTCB,		
+				 (CPU_CHAR*   )"ota task", 		
+                 (OS_TASK_PTR )ota_task, 			
                  (void*       )0,					
-                 (OS_PRIO	  )KEY_TASK_PRIO,     
-                 (CPU_STK*    )&KEY_TASK_STK[0],	
-                 (CPU_STK_SIZE)KEY_STK_SIZE/10,	
-                 (CPU_STK_SIZE)KEY_STK_SIZE,		
+                 (OS_PRIO	  )OTA_TASK_PRIO,     
+                 (CPU_STK*    )&OTA_TASK_STK[0],	
+                 (CPU_STK_SIZE)OTA_STK_SIZE/10,	
+                 (CPU_STK_SIZE)OTA_STK_SIZE,		
                  (OS_MSG_QTY  )0,					
                  (OS_TICK	  )0,  					
                  (void*       )0,					
                  (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
-                 (OS_ERR*     )&err);      
-							
+                 (OS_ERR*     )&err);
+  
+	OS_TaskSuspend((OS_TCB*)&OTATaskTCB,&err); //挂起OTA任务							
 	OS_TaskSuspend((OS_TCB*)&InteractiveTaskTCB,&err);	//挂起pure任务
 	OS_TaskSuspend((OS_TCB*)&StartTaskTCB,&err);		//挂起开始任务			 
 	OS_CRITICAL_EXIT();	//退出临界区
@@ -269,7 +296,7 @@ void emwindemo_task(void *p_arg)
 	
 	int result;
 	result=Create_TTFFont("0:/SYSTEM/FONT/ScixFont/VisbyCF-MediumOblique.ttf");
-	if(result) printf("TTF??????,%d\r\n",result);
+	if(result) printf("TTF,%d\r\n",result);
 	
 	GUI_CURSOR_Show();
 	GUI_SetBkColor(GUI_CYAN);
@@ -320,8 +347,11 @@ void wifistatus_task(void *p_arg)
 {
 	OS_ERR err;
 	u16 rlen=0;
+	CPU_SR_ALLOC();
+	
 	while(1)
 	{
+		OS_CRITICAL_ENTER();
 		//如果在非AP模式的情况下 查询网络连接的状态
 		if(wifi_work_mode != WIFI_AP_SERVER_MODE)
 		{
@@ -343,12 +373,14 @@ void wifistatus_task(void *p_arg)
 							
 							OS_TaskResume((OS_TCB*)&InteractiveTaskTCB,&err);//启动pure任务
 							OS_TaskSuspend((OS_TCB*)&WifiStatusTaskTCB,&err);		//挂起自己
+							OS_CRITICAL_EXIT();//退出临界状态
 						}
 					
 						OSTimeDlyHMSM(0,0,0,100,OS_OPT_TIME_PERIODIC,&err);//延时100ms
 				}
 				else
 				{
+						OS_CRITICAL_EXIT();	//退出临界状态
 						//挂起pure_task任务
 						OSTimeDlyHMSM(0,0,0,2000,OS_OPT_TIME_PERIODIC,&err);//延时2s
 				}
@@ -372,134 +404,13 @@ void wifistatus_task(void *p_arg)
 						USART3_RX_STA = 0;
 				}
 				
+				OS_CRITICAL_EXIT();//退出临界状态
+				
 				OSTimeDlyHMSM(0,0,0,100,OS_OPT_TIME_PERIODIC,&err);//延时100ms
 		}
 	}
 }
 
-//PURE任务  与无线升级共用一个任务   设置无线升级为定时升级  tcp client方式工作
-//挂起wifistatus_task 任务       如果分为两个任务 当客户端切换服务器ip时 会导致断开连接
-void interactive_task(void *p_arg)
-{
-	OS_ERR err;
-	u16 rlen=0;
-	static u8 chagemode = 1;
-	static u8 mode = 0; //0:pure 1:ota
-	static u32 cnt = 0;
-	static u8 ota_fail_cnt = 0;
-	static u8 ota_try_cnt = 0;
-	
-	u8 res = 0;
-	//根据协议解析数据          初始化网络通信模式 
-	while(1)
-	{		
-			cnt++;//做为系统OTA升级定时器 24小时  24*60*60*60*2s   以500ms为计时单位 
-		
-			if(cnt > 3*60*60*60*2) //3小时
-			{
-				cnt = 0;
-				mode = 1;//启动检测升级标志位
-			}
-			
-			//初始化网络状态与净化器交互
-			if(mode==0 && chagemode==1)
-			{
-				chagemode = 0;
-				if(atk_8266_staclient_init(0))
-				{
-					//网络连接失败
-					//启动网络监控任务
-					//挂起本身任务
-					OS_TaskResume((OS_TCB*)&WifiStatusTaskTCB,&err);//启动pure任务
-					OS_TaskSuspend((OS_TCB*)&InteractiveTaskTCB,&err);		//挂起自己
-				}
-			}
-			//初始化网络状态无线升级
-			else if(mode==1 && chagemode==1)
-			{
-				chagemode = 0;
-				if(atk_8266_staclient_init(1))
-				{
-					//网络连接失败
-					//启动网络监控任务
-					//挂起本身任务
-					OS_TaskResume((OS_TCB*)&WifiStatusTaskTCB,&err);//启动pure任务
-					OS_TaskSuspend((OS_TCB*)&InteractiveTaskTCB,&err);		//挂起自己
-				}
-			}
-			
-			//发送数据
-			if(mode == 0)
-			{
-				
-			}
-			//升级模式  升级检测完成把mode置为0
-			else if(mode == 1)
-			{
-					if(g_ota_start == 0)
-					{
-							//发送启动升级命令     
-							ask_for_update();
-							//尝试10次左右如果不成功则退出升级模式
-							ota_try_cnt++;
-							if(ota_try_cnt > 9)
-							{
-								ota_try_cnt = 0;
-								//退出升级模式 
-								mode = 0;
-								chagemode = 1;
-							}
-							
-							//一直向服务器发送 可以考虑延时
-							OSTimeDlyHMSM(0,0,0,5000,OS_OPT_TIME_PERIODIC,&err);//延时5000ms
-					}
-			}
-			
-			//如果串口接收到数据  超过20s没有数据进来 则认为网络断开或者升级完成
-			if(USART3_RX_STA&0X8000)
-			{
-					ota_try_cnt = 0;
-					rlen=USART3_RX_STA&0X7FFF;	//得到本次接收到的数据长度
-					USART3_RX_BUF[rlen]=0;		//添加结束符 
-					printf("%s",USART3_RX_BUF);	//发送到串口   
-					//根据mode来进行数据解析
-					if(mode == 0)
-					{
-						//单独处理函数 直接根据协议进行比对
-					}
-					//升级模式  升级检测完成把mode置为0
-					else if(mode == 1)
-					{
-						//单独处理函数 直接根据协议进行比对
-						res = ota_prase(USART3_RX_BUF, rlen);
-						//如果失败次数超过10次 
-						if(res)
-						{
-								ota_fail_cnt++;
-								if(ota_fail_cnt > 9)
-								{
-									//退出升级模式 
-									mode = 0;
-									chagemode = 1;
-									
-									//删除升级文件
-								}
-						}
-						
-						//如果升级完成
-						if(g_ota_sucess)
-						{
-							//写入升级完成标志
-							
-							//重启系统
-						}
-					}
-					
-					USART3_RX_STA = 0;
-			}
-			//		
-			OSTimeDlyHMSM(0,0,0,500,OS_OPT_TIME_PERIODIC,&err);//延时500ms
-	}
-}
+
 
 

@@ -66,14 +66,16 @@ u8* atk_8266_check_cmd(u8 *str)
 //       1,发送失败
 u8 atk_8266_send_cmd(u8 *cmd,u8 *ack,u16 waittime)
 {
-	u8 res=0; 
+	u8 res=0;
+	OS_ERR err=0;
 	USART3_RX_STA=0;
 	u3_printf("%s\r\n",cmd);	//发送命令
 	if(ack&&waittime)		//需要等待应答
 	{
 		while(--waittime)	//等待倒计时
 		{
-			delay_ms(10);
+		//	delay_ms(10);//延时不能这么操作
+			OSTimeDly(10,0,&err);
 			if(USART3_RX_STA&0X8000)//接收到期待的应答结果
 			{
 				if(atk_8266_check_cmd(ack))
@@ -96,13 +98,15 @@ u8 atk_8266_send_cmd(u8 *cmd,u8 *ack,u16 waittime)
 u8 atk_8266_send_data(u8 *data,u8 *ack,u16 waittime)
 {
 	u8 res=0; 
+	OS_ERR err=0;
 	USART3_RX_STA=0;
 	u3_printf("%s",data);	//发送命令
 	if(ack&&waittime)		//需要等待应答
 	{
 		while(--waittime)	//等待倒计时
 		{
-			delay_ms(10);
+			//delay_ms(10);
+			OSTimeDly(10,0,&err);
 			if(USART3_RX_STA&0X8000)//接收到期待的应答结果
 			{
 				if(atk_8266_check_cmd(ack))break;//得到有效数据 
@@ -118,15 +122,17 @@ u8 atk_8266_send_data(u8 *data,u8 *ack,u16 waittime)
 //       1,退出失败
 u8 atk_8266_quit_trans(void)
 {
+	OS_ERR err;
+	
 	while((USART3->SR&0X40)==0);	//等待发送空
 	USART3->DR='+';      
-	delay_ms(15);					//大于串口组帧时间(10ms)
+	OSTimeDly(15,0,&err);				//大于串口组帧时间(10ms)
 	while((USART3->SR&0X40)==0);	//等待发送空
 	USART3->DR='+';      
-	delay_ms(15);					//大于串口组帧时间(10ms)
+	OSTimeDly(15,0,&err);				//大于串口组帧时间(10ms)
 	while((USART3->SR&0X40)==0);	//等待发送空
 	USART3->DR='+';      
-	delay_ms(500);					//等待500ms
+	OSTimeDly(500,0,&err);			//等待500ms
 	return atk_8266_send_cmd("AT","OK",20);//退出透传判断.
 }
 //获取ATK-ESP8266模块的AP+STA连接状态

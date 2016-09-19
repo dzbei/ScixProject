@@ -6,6 +6,7 @@ extern char PSW[];
 //用于配置wifi密码       这不需要出错处理
 void atk_8266_wifiap_init(void)
 {
+		OS_ERR err;
 		u8 *p;
 		p=mymalloc(SRAMIN,32);							//申请32字节内存
 	
@@ -14,10 +15,8 @@ void atk_8266_wifiap_init(void)
 
 		atk_8266_send_cmd("AT+CWMODE=2","OK",50);		//设置WIFI AP模式
 		atk_8266_send_cmd("AT+RST","OK",20);	
-		delay_ms(1000);         //延时3S等待重启成功
-		delay_ms(1000);
-		delay_ms(1000);
-		delay_ms(1000);
+	
+		OSTimeDly(3000,0,&err);
 	
 		//设置供外部连接的SSID和PSW    1代表通道号     4代表加密方式为WPA_WPA2_PSK
 		sprintf((char*)p,"AT+CWSAP=\"%s\",\"%s\",%d,%d","esp8266_test","12345678",1, 4);

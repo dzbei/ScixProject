@@ -1,5 +1,7 @@
 #include "ota.h"
-#include "usart.h"
+
+extern OS_TCB OTATaskTCB;
+extern OS_TCB InteractiveTaskTCB;
 
 u8 g_ota_sucess = 0;//标记升级完成
 u8 g_ota_start = 0;
@@ -99,7 +101,6 @@ void ask_for_update(void)
 //升级应答 透传服务器是否只能连接一个
 void update_reply(unsigned char c_num, unsigned char a_num, unsigned char flag)
 {
-	//	unsigned char buf_num;
 	char s_c_num[3], s_a_num[3];
 	unsigned char buf[64];
 
@@ -162,4 +163,99 @@ u8 ota_prase(u8 *buffer, u16 all_length)
 	}
 	//接收数据失败
 	return 1;
+}
+
+void ota_task(void *p_arg)
+{
+		OS_ERR err;
+		u8 res;
+		u16 rlen;
+		static u8 first_init = 0;
+		static u8 ota_try_cnt = 0;
+		static u8 ota_fail_cnt = 0;
+		
+		CPU_SR_ALLOC();
+	
+		while(1)
+		{			
+			if(atk_8266_staclient_init(0)&&(first_init==0))
+			{
+				//网络连接失败 重新启动pure任务
+				OS_TaskResume((OS_TCB*)&InteractiveTaskTCB,&err);//启动pure任务
+				OS_TaskSuspend((OS_TCB*)&OTATaskTCB,&err);		//挂起自己
+			}
+			//发送升级命令 如果10没有回应那么就退出升级模式
+			else
+			{
+					first_init = 1;
+				
+					if(g_ota_start == 0)
+					{
+							//发送启动升级命令     
+							ask_for_update();
+							//尝试10次左右如果不成功则退出升级模式
+							ota_try_cnt++;
+							if(ota_try_cnt > 9)
+							{
+								ota_try_cnt = 0;
+								first_init = 0;
+								
+								OS_TaskResume((OS_TCB*)&InteractiveTaskTCB,&err);//启动pure任务
+								OS_TaskSuspend((OS_TCB*)&OTATaskTCB,&err);		//挂起自己
+							}
+																											
+							//一直向服务器发送
+							OSTimeDlyHMSM(0,0,0,5000,OS_OPT_TIME_PERIODIC,&err);//延时5000ms
+					}
+					
+					//如果串口接收到数据  超过20s没有数据进来 则认为网络断开或者升级完成
+					if(USART3_RX_STA&0X8000)
+					{
+								OS_CRITICAL_ENTER(); //进入临界
+								ota_try_cnt = 0;
+								rlen=USART3_RX_STA&0X7FFF;	//得到本次接收到的数据长度
+								USART3_RX_BUF[rlen]=0;		//添加结束符 
+								printf("%s",USART3_RX_BUF);	//发送到串口   
+
+								//单独处理函数 直接根据协议进行比对
+								res = ota_prase(USART3_RX_BUF, rlen);
+								//如果失败次数超过10次 
+								if(res)
+								{
+										ota_fail_cnt++;
+										if(ota_fail_cnt > 9)
+										{
+												first_init = 0;
+												//删除升级文件
+												OS_TaskResume((OS_TCB*)&InteractiveTaskTCB,&err);//启动pure任务
+												OS_TaskSuspend((OS_TCB*)&OTATaskTCB,&err);		//挂起自己
+										}
+								}
+								
+								//如果升级完成
+								if(g_ota_sucess)
+								{
+									//写入升级完成标志
+									
+									//重启系统
+
+								}
+								
+								USART3_RX_STA = 0;
+								
+								OS_CRITICAL_EXIT();//退出临界
+						}
+						else
+						{
+								//超过预定时间没有数据交互 则认为断网
+								//删除升级文件
+							  									
+								first_init = 0;
+								OS_TaskResume((OS_TCB*)&InteractiveTaskTCB,&err);//启动pure任务
+								OS_TaskSuspend((OS_TCB*)&OTATaskTCB,&err);		//挂起自己
+						}
+			}
+			
+			OSTimeDlyHMSM(0,0,0,500,OS_OPT_TIME_PERIODIC,&err);//延时500ms
+		}
 }

@@ -12,6 +12,7 @@
 #include "string.h"    
 #include "text.h"		
 #include "ff.h"
+#include "os.h"
 
 #define WIFI_NONE_MODE					0
 #define WIFI_STA_CLIENT_MODE    1

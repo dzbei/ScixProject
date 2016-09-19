@@ -20,17 +20,20 @@ u8 netpro=0;	//网络模式
 //当初始化失败 即没有连接上热点 那么就返回失败 -1 然后切换到wifiap模式
 u8 atk_8266_wifista_init(void)
 {
+	OS_ERR err;
 	u8 ipbuf[16]; 	//IP缓存
 	u8 res = 0;
 	char *p;
+	
+	CPU_SR_ALLOC();
+	OS_CRITICAL_ENTER();
+	
 	p=mymalloc(SRAMIN,32);							//申请32字节内存
 	
 	atk_8266_send_cmd("AT+CWMODE=1","OK",50);		//设置WIFI STA模式
 	atk_8266_send_cmd("AT+RST","OK",20);		//DHCP服务器关闭(仅AP模式有效) 
-	delay_ms(1000);         //延时3S等待重启成功
-	delay_ms(1000);
-	delay_ms(1000);
-	delay_ms(1000);
+
+	OSTimeDly(3000,0,&err);
 	
 	//SSID和PSW的值在SD卡里面读取
 	sprintf(p,"AT+CWJAP=\"%.16s\",\"%.16s\"\r\n",SSID,PSW);	
@@ -47,6 +50,8 @@ u8 atk_8266_wifista_init(void)
 			
 	myfree(SRAMIN,p);		//释放内存 
 	
+	OS_CRITICAL_EXIT();
+		
 	return res;
 	//配置完之后 进入正常数据交互状态      定时去检测是否需要升级 升级在晚上的时间进行 由于是单链路 所有不存在冲突问题
 }
@@ -56,6 +61,10 @@ u8 atk_8266_staclient_init(u8 mode)
 {
 		u8 res = 0;
 		char *p;
+	
+		CPU_SR_ALLOC();
+		OS_CRITICAL_ENTER();
+	
 		p=mymalloc(SRAMIN,32);							//申请32字节内存
 		
 		atk_8266_send_cmd("AT+CIPCLOSE","OK",200);  
@@ -81,6 +90,8 @@ u8 atk_8266_staclient_init(u8 mode)
 		}
 		
 		myfree(SRAMIN,p);		//释放内存 
+		
+		OS_CRITICAL_EXIT();
 		
 		return res;
 }
