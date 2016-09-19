@@ -1,6 +1,8 @@
 #include "ota.h"
+#include "usart.h"
 
-extern u16 USART3_RX_STA; 
+u8 g_ota_sucess = 0;//标记升级完成
+u8 g_ota_start = 0;
 
 const unsigned int ccitt_table[256] = 
 				{ 0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280,
@@ -47,12 +49,75 @@ static unsigned int cal_crc16(unsigned char *ptr, unsigned int len)
 	return crc;
 }
 
+static char * itoa(int num, char * str, int radix)
+{
+	char temp;
 
-u8 ota_prase(u8 *buffer)
+	char index[]="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	unsigned unum;
+	int i = 0, j, k;
+
+	if(radix == 10 && num < 0)
+	{
+		unum = (unsigned) - num;
+		str[i++] = '-';
+	}
+	else	unum = (unsigned)num;
+
+	do{
+		str[i++] = index[unum % (unsigned)radix];
+		unum /= radix;
+	}while(unum);
+	str[i] = '\0';
+
+	if(str[0] == '-')
+	{
+		k = 1;
+	}
+	else
+	{
+		k=0;
+	}
+	
+	for(j = k; j <= (i - 1) / 2; j++)
+	{
+		temp = str[j];
+		str[j] = str[i - 1 + k - j];
+		str[i - 1 + k - j] = temp;
+	}
+	return str;
+}
+
+void ask_for_update(void)
+{
+	char buf[64];
+	sprintf(buf, "{\"id\":\"%s\",\"type\":\"%s\"}", "A12345", "1");
+	u3_printf(buf);
+	printf("%s\r\n", buf);
+}
+
+//升级应答 透传服务器是否只能连接一个
+void update_reply(unsigned char c_num, unsigned char a_num, unsigned char flag)
+{
+	//	unsigned char buf_num;
+	char s_c_num[3], s_a_num[3];
+	unsigned char buf[64];
+
+	itoa(c_num, s_c_num, 10);
+	itoa(a_num, s_a_num, 10);
+	
+	sprintf(buf, "{\"id\":\"%s\",\"type\":\"%s\",\"c_num\":\"%s\",\"a_num\":\"%s\",\"result\":\"%s\"}#", "A12345", "2", s_c_num, s_a_num, flag?"ok":"fail");
+
+	//透传到服务器
+	u3_printf(buf);
+	printf("%s\r\n", buf);
+}
+
+u8 ota_prase(u8 *buffer, u16 all_length)
 {
 	u8 cur_packet_num = 0;
 	u8 all_packet_num = 0;
-	u16 all_length = 0, data_length = 0;
+	u16 data_length = 0;
 	u16 crc_code = 0, crc_code_temp = 0;
 
 	//协议头 						0xEE 0xEE
@@ -61,32 +126,40 @@ u8 ota_prase(u8 *buffer)
 	//数据有效长度 			2字节
 	//crc16校验         2字节
 	//结束符            0x55 0x55
-	if(buffer==NULL) return 1;
+	if(all_length<10) return 1;
 	
+	//成功接收一帧数据
 	if((buffer[0]==OTA_HEAD)&&(buffer[1]==OTA_HEAD))
 	{
+			g_ota_start = 1;
+		
 			cur_packet_num = buffer[2];
 			all_packet_num = buffer[3];
-		  all_length = USART3_RX_STA;
-			data_length = (buffer[4]<<8) | buffer[5];  //高位在前
+			data_length = (buffer[4]<<8) | buffer[5];  //高位在前  写flash数据时候用到
 			crc_code = buffer[all_length - 3] | (buffer[all_length -4] << 8);
 			crc_code_temp = cal_crc16(buffer, all_length - 4 );
 		
 			if(crc_code == crc_code_temp)
 			{
 					//保存相应的数据到SD卡中
-				
+					
 					//如果当前包号等于最大包号即升级完成
 					if(cur_packet_num == all_packet_num)
 					{
-						
+							g_ota_sucess = 1;
 					}
-					
+
 					//回复服务器
+					update_reply(cur_packet_num, all_packet_num, 1);
+					
+					return 0;//接收数据成功
 			}
 			else
 			{
 					//回复服务器
+					update_reply(cur_packet_num, all_packet_num, 0);
 			}
 	}
+	//接收数据失败
+	return 1;
 }

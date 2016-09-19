@@ -31,6 +31,7 @@
 #include "ssd2828.h"
 #include "common.h"
 #include "ttffontcreate.h"
+#include "ota.h"
 /************************************************
  ALIENTEK STM32开发板STemWin实验
  STemwin BMP图片显示
@@ -107,6 +108,9 @@ OS_TCB EmwindemoTaskTCB;
 CPU_STK EMWINDEMO_TASK_STK[EMWINDEMO_STK_SIZE];
 //emwindemo_task任务
 void emwindemo_task(void *p_arg);
+
+extern u8 g_ota_sucess;
+extern u8 g_ota_start;
 
 int main(void)
 {
@@ -224,7 +228,7 @@ void start_task(void *p_arg)
                  (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
                  (OS_ERR*     )&err);		
 								 
-	//interactive任务					设置初始状态为挂起
+	//interactive任务					
 	OSTaskCreate((OS_TCB*     )&InteractiveTaskTCB,		
 				 (CPU_CHAR*   )"interactive task", 		
                  (OS_TASK_PTR )interactive_task, 			
@@ -253,7 +257,8 @@ void start_task(void *p_arg)
                  (void*       )0,					
                  (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
                  (OS_ERR*     )&err);      
-								 
+							
+	OS_TaskSuspend((OS_TCB*)&InteractiveTaskTCB,&err);	//挂起pure任务
 	OS_TaskSuspend((OS_TCB*)&StartTaskTCB,&err);		//挂起开始任务			 
 	OS_CRITICAL_EXIT();	//退出临界区
 }
@@ -323,7 +328,7 @@ void wifistatus_task(void *p_arg)
 				//网络连接失败
 				if(atk_8266_consta_check() != '+')
 				{
-						//需要切换P端服务器IP和无线升级服务器IP
+						//只连接路由热点获取IP
 						if(atk_8266_wifista_init())//返回true表示失败
 						{
 							atk_8266_wifiap_init();
@@ -332,8 +337,12 @@ void wifistatus_task(void *p_arg)
 						}
 						else
 						{
+									 
 							//并且开启pure_task任务 
 							wifi_work_mode = WIFI_STA_CLIENT_MODE;//进入正常工作模式
+							
+							OS_TaskResume((OS_TCB*)&InteractiveTaskTCB,&err);//启动pure任务
+							OS_TaskSuspend((OS_TCB*)&WifiStatusTaskTCB,&err);		//挂起自己
 						}
 					
 						OSTimeDlyHMSM(0,0,0,100,OS_OPT_TIME_PERIODIC,&err);//延时100ms
@@ -355,8 +364,8 @@ void wifistatus_task(void *p_arg)
 						USART3_RX_BUF[rlen]=0;		//添加结束符 
 						printf("%s",USART3_RX_BUF);	//发送到串口   
 						//针对串口发送过来的值 进行解析
-						//解析完保存到SD卡中
-						
+						//解析完保存到SD卡中 然后又继续回到条件一执行
+						//ssid:xxwl,psw:72122010
 						//ssid和psw保存完后 把wifi模式设置为NONE 重新连接
 						wifi_work_mode = WIFI_NONE_MODE;
 					
@@ -377,7 +386,11 @@ void interactive_task(void *p_arg)
 	static u8 chagemode = 1;
 	static u8 mode = 0; //0:pure 1:ota
 	static u32 cnt = 0;
-	//根据协议解析数据          初始化网络通信模式  升级时机切入
+	static u8 ota_fail_cnt = 0;
+	static u8 ota_try_cnt = 0;
+	
+	u8 res = 0;
+	//根据协议解析数据          初始化网络通信模式 
 	while(1)
 	{		
 			cnt++;//做为系统OTA升级定时器 24小时  24*60*60*60*2s   以500ms为计时单位 
@@ -397,6 +410,8 @@ void interactive_task(void *p_arg)
 					//网络连接失败
 					//启动网络监控任务
 					//挂起本身任务
+					OS_TaskResume((OS_TCB*)&WifiStatusTaskTCB,&err);//启动pure任务
+					OS_TaskSuspend((OS_TCB*)&InteractiveTaskTCB,&err);		//挂起自己
 				}
 			}
 			//初始化网络状态无线升级
@@ -408,6 +423,8 @@ void interactive_task(void *p_arg)
 					//网络连接失败
 					//启动网络监控任务
 					//挂起本身任务
+					OS_TaskResume((OS_TCB*)&WifiStatusTaskTCB,&err);//启动pure任务
+					OS_TaskSuspend((OS_TCB*)&InteractiveTaskTCB,&err);		//挂起自己
 				}
 			}
 			
@@ -419,12 +436,29 @@ void interactive_task(void *p_arg)
 			//升级模式  升级检测完成把mode置为0
 			else if(mode == 1)
 			{
-				
+					if(g_ota_start == 0)
+					{
+							//发送启动升级命令     
+							ask_for_update();
+							//尝试10次左右如果不成功则退出升级模式
+							ota_try_cnt++;
+							if(ota_try_cnt > 9)
+							{
+								ota_try_cnt = 0;
+								//退出升级模式 
+								mode = 0;
+								chagemode = 1;
+							}
+							
+							//一直向服务器发送 可以考虑延时
+							OSTimeDlyHMSM(0,0,0,5000,OS_OPT_TIME_PERIODIC,&err);//延时5000ms
+					}
 			}
 			
 			//如果串口接收到数据  超过20s没有数据进来 则认为网络断开或者升级完成
 			if(USART3_RX_STA&0X8000)
 			{
+					ota_try_cnt = 0;
 					rlen=USART3_RX_STA&0X7FFF;	//得到本次接收到的数据长度
 					USART3_RX_BUF[rlen]=0;		//添加结束符 
 					printf("%s",USART3_RX_BUF);	//发送到串口   
@@ -437,6 +471,28 @@ void interactive_task(void *p_arg)
 					else if(mode == 1)
 					{
 						//单独处理函数 直接根据协议进行比对
+						res = ota_prase(USART3_RX_BUF, rlen);
+						//如果失败次数超过10次 
+						if(res)
+						{
+								ota_fail_cnt++;
+								if(ota_fail_cnt > 9)
+								{
+									//退出升级模式 
+									mode = 0;
+									chagemode = 1;
+									
+									//删除升级文件
+								}
+						}
+						
+						//如果升级完成
+						if(g_ota_sucess)
+						{
+							//写入升级完成标志
+							
+							//重启系统
+						}
 					}
 					
 					USART3_RX_STA = 0;
